@@ -1,5 +1,4 @@
 use crate::app::App;
-use chrono::Local;
 use clap::Parser;
 use crossterm::{
     ExecutableCommand,
@@ -8,8 +7,7 @@ use crossterm::{
 };
 use futures_util::StreamExt;
 use ratatui::{Terminal, prelude::CrosstermBackend};
-use rumqttc::{Event as RumqttEvent, Packet};
-use std::{io::stdout, time::Duration};
+use std::io::stdout;
 use tokio::{select, sync::mpsc};
 
 mod app;
@@ -18,19 +16,12 @@ mod config;
 mod mqtt;
 mod ui;
 
-pub enum MqttEvent {
-    Connected,
-    Publish(app::Message),
-    Disconnected,
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli_args = args::Args::parse();
 
     let config = if let Some(name) = &cli_args.profile {
-        let session = config::Config::load()
-            .and_then(|cfg| cfg.get_sessions(name).ok().cloned());
+        let session = config::Config::load().and_then(|cfg| cfg.get_sessions(name).ok().cloned());
         match session {
             Some(s) => {
                 let mut cfg = mqtt::ClientConfig::from_session(&s);
@@ -45,34 +36,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut client = mqtt::Client::new(&config);
     client.subscribe_to_topic(&config.topic).await;
-    let (tx, mut rx) = mpsc::unbounded_channel::<MqttEvent>();
-
-    let mut eventloop = client.eventloop;
-
-    tokio::spawn(async move {
-        loop {
-            match eventloop.poll().await {
-                Ok(RumqttEvent::Incoming(Packet::ConnAck(_))) => {
-                    let _ = tx.send(MqttEvent::Connected);
-                }
-                Ok(RumqttEvent::Incoming(Packet::Publish(packet))) => {
-                    let msg = app::Message {
-                        topic: packet.topic,
-                        ts: Local::now(),
-                        qos: packet.qos as u8,
-                        retain: packet.retain,
-                        payload: String::from_utf8_lossy(&packet.payload).to_string(),
-                    };
-                    let _ = tx.send(MqttEvent::Publish(msg));
-                }
-                Err(_) => {
-                    let _ = tx.send(MqttEvent::Disconnected);
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                }
-                _ => {}
-            }
-        }
-    });
+    let (tx, mut rx) = mpsc::unbounded_channel::<mqtt::MqttEvent>();
+    client.start(tx);
 
     let mut event_stream = EventStream::new();
 
@@ -116,10 +81,10 @@ fn handle_key_event(key: KeyEvent, app: &mut App) -> bool {
     }
     false
 }
-fn handle_mqtt_event(evt: MqttEvent, app: &mut App) {
+fn handle_mqtt_event(evt: mqtt::MqttEvent, app: &mut App) {
     match evt {
-        MqttEvent::Connected => app.on_connected(),
-        MqttEvent::Disconnected => app.on_disconnected(),
-        MqttEvent::Publish(msg) => app.on_message(msg),
+        mqtt::MqttEvent::Connected => app.on_connected(),
+        mqtt::MqttEvent::Disconnected => app.on_disconnected(),
+        mqtt::MqttEvent::Publish(msg) => app.on_message(msg),
     }
 }

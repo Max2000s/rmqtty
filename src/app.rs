@@ -1,6 +1,7 @@
-use chrono::{DateTime, Local};
 use ratatui::widgets::ListState;
 use std::collections::{BTreeMap, VecDeque};
+
+use crate::mqtt;
 
 const MAX_MESSAGES: usize = 200;
 
@@ -12,16 +13,8 @@ pub struct App {
     pub list_state: ListState,
 }
 
-pub struct Message {
-    pub topic: String,
-    pub ts: DateTime<Local>,
-    pub qos: u8,
-    pub retain: bool,
-    pub payload: String,
-}
-
 pub struct TopicNode {
-    pub messages: VecDeque<Message>,
+    pub messages: VecDeque<mqtt::Message>,
     pub children: BTreeMap<String, TopicNode>,
     pub total_count: u64,
     pub expanded: bool,
@@ -62,7 +55,7 @@ impl App {
         self.topic_tree.toggle_expanded(&mut idx);
     }
 
-    pub fn on_message(&mut self, msg: Message) {
+    pub fn on_message(&mut self, msg: mqtt::Message) {
         self.message_count += 1;
         self.topic_tree.insert(&msg.topic.clone(), msg);
     }
@@ -91,7 +84,7 @@ impl TopicNode {
         }
     }
 
-    pub fn insert(&mut self, topic: &str, msg: Message) {
+    pub fn insert(&mut self, topic: &str, msg: mqtt::Message) {
         self.total_count += 1;
 
         let segments: Vec<&str> = topic.split('/').collect();
