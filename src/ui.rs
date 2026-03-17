@@ -84,7 +84,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     let msg_widget = Paragraph::new(Text::from(msg_lines))
         .block(Block::default().borders(Borders::ALL).title("Message"))
-        .wrap(Wrap { trim: false });
+        .wrap(Wrap { trim: false })
+        .scroll((app.message_scroll, 0));
 
     frame.render_widget(msg_widget, bottom[1]);
 }

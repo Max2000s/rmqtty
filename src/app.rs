@@ -4,6 +4,12 @@ use std::collections::{BTreeMap, VecDeque};
 use crate::mqtt;
 
 const MAX_MESSAGES: usize = 200;
+const SCROLL_AMOUNT: u16 = 5;
+
+pub enum Focus {
+    Topic,
+    Message,
+}
 
 pub struct App {
     pub topic_tree: TopicNode,
@@ -11,6 +17,8 @@ pub struct App {
     pub connected: bool,
     pub selected: usize,
     pub list_state: ListState,
+    pub focus: Focus,
+    pub message_scroll: u16,
 }
 
 pub struct TopicNode {
@@ -37,22 +45,65 @@ impl App {
             connected: false,
             selected: 0,
             list_state: ListState::default(),
+            focus: Focus::Topic,
+            message_scroll: 0,
         }
     }
 
     pub fn on_up(&mut self) {
-        self.selected = self.selected.saturating_sub(1);
-        self.list_state.select(Some(self.selected));
+        match self.focus {
+            Focus::Topic => {
+                self.selected = self.selected.saturating_sub(1);
+                self.list_state.select(Some(self.selected))
+            }
+            Focus::Message => {
+                self.message_scroll = self.message_scroll.saturating_sub(SCROLL_AMOUNT);
+            }
+        }
     }
 
     pub fn on_down(&mut self, max: usize) {
-        self.selected = (self.selected + 1).min(max.saturating_sub(1));
-        self.list_state.select(Some(self.selected));
+        match self.focus {
+            Focus::Topic => {
+                self.selected = (self.selected + 1).min(max.saturating_sub(1));
+                self.list_state.select(Some(self.selected))
+            }
+            Focus::Message => {
+                self.message_scroll = self.message_scroll.saturating_add(SCROLL_AMOUNT);
+            }
+        }
     }
 
     pub fn on_enter(&mut self) {
-        let mut idx = self.selected;
-        self.topic_tree.toggle_expanded(&mut idx);
+        let is_leaf = {
+            let mut idx = self.selected;
+            self.topic_tree
+                .get_node_at(&mut idx)
+                .map(|node| node.children.is_empty())
+                .unwrap_or(false)
+        };
+
+        if is_leaf {
+            self.message_scroll = 0;
+            self.focus = Focus::Message;
+        } else {
+            let mut idx = self.selected;
+            self.topic_tree.toggle_expanded(&mut idx);
+        }
+    }
+
+    pub fn on_escape(&mut self) {
+        self.focus = Focus::Topic;
+    }
+
+    pub fn on_yank(&mut self) {
+        if let Some(node) = self.selected_node() {
+            if let Some(msg) = node.messages.back() {
+                if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                    let _ = clipboard.set_text(&msg.payload);
+                }
+            }
+        }
     }
 
     pub fn on_message(&mut self, msg: mqtt::Message) {
@@ -113,7 +164,7 @@ impl TopicNode {
                 has_children: !val.children.is_empty(),
                 expanded: val.expanded,
                 message_count: val.total_count,
-                sub_topic_count: 42,
+                sub_topic_count: val.descendant_topic_count(),
             });
             if val.expanded {
                 val.flatten(target, depth + 1)
@@ -143,6 +194,17 @@ impl TopicNode {
             .sum()
     }
 
+    pub fn descendant_topic_count(&self) -> u64 {
+        let mut descendant_count = 0;
+        for val in self.children.values() {
+            descendant_count += 1;
+            if !val.children.is_empty() {
+                descendant_count += val.descendant_topic_count()
+            }
+        }
+        descendant_count
+    }
+
     pub fn get_node_at(&self, position: &mut usize) -> Option<&TopicNode> {
         for (_, val) in self.children.iter() {
             if *position == 0 {
@@ -150,10 +212,10 @@ impl TopicNode {
             }
             *position -= 1;
 
-            if val.expanded {
-                if let Some(node) = val.get_node_at(position) {
-                    return Some(node);
-                }
+            if val.expanded
+                && let Some(node) = val.get_node_at(position)
+            {
+                return Some(node);
             }
         }
         None

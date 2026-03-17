@@ -74,8 +74,10 @@ fn handle_key_event(key: KeyEvent, app: &mut App) -> bool {
         KeyCode::Up => app.on_up(),
         KeyCode::Down => app.on_down(item_len),
         KeyCode::Enter => app.on_enter(),
+        KeyCode::Esc => app.on_escape(),
         KeyCode::Char('j') => app.on_down(item_len),
         KeyCode::Char('k') => app.on_up(),
+        KeyCode::Char('y') => app.on_yank(),
         // ... rest of keybindings
         _ => {}
     }
